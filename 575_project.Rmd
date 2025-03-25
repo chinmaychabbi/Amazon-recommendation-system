@@ -1,0 +1,731 @@
+---
+title: "Amazon product recomendation System"
+author: "Chinmay Chabbi"
+date: "10/28/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(stringr)
+
+# Load datasets
+electronics <- read.csv("All Electronics.csv", header = TRUE, sep = ",")
+home_kitchen <- read.csv("All Home and Kitchen.csv", header = TRUE, sep = ",")
+sports_fitness <- read.csv("All Sports Fitness and Outdoors.csv", header = TRUE, sep = ",")
+fashion <- read.csv("Amazon Fashion.csv", header = TRUE, sep = ",")
+user_history <- read.csv("realistic_user_activities.csv", stringsAsFactors = FALSE)
+```
+
+```{r}
+# Check the structure of each dataset
+str(electronics)
+str(home_kitchen)
+str(sports_fitness)
+str(fashion)
+str(user_history)
+
+```
+
+```{r}
+# Function to summarize missing values
+summarize_missing_values <- function(data) {
+  missing_summary <- sapply(data, function(col) sum(is.na(col)))
+  missing_percent <- missing_summary / nrow(data) * 100
+  data.frame(Column = names(missing_summary),
+             MissingCount = missing_summary,
+             MissingPercent = missing_percent)
+}
+
+electronics_missing <- summarize_missing_values(electronics)
+home_kitchen_missing <- summarize_missing_values(home_kitchen)
+sports_fitness_missing <- summarize_missing_values(sports_fitness)
+fashion_missing <- summarize_missing_values(fashion)
+user_history_missing <- summarize_missing_values(user_history)
+
+list(
+  Electronics = electronics_missing,
+  HomeKitchen = home_kitchen_missing,
+  SportsFitness = sports_fitness_missing,
+  Fashion = fashion_missing,
+  UserHistory = user_history_missing
+)
+
+```
+
+
+```{r}
+# Function to count duplicates
+count_duplicates <- function(data) {
+  sum(duplicated(data))
+}
+
+duplicates <- list(
+  Electronics = count_duplicates(electronics),
+  HomeKitchen = count_duplicates(home_kitchen),
+  SportsFitness = count_duplicates(sports_fitness),
+  Fashion = count_duplicates(fashion),
+  UserHistory = count_duplicates(user_history)
+)
+duplicates
+
+```
+
+
+```{r}
+# Function to summarize numeric columns
+summarize_numeric <- function(data, columns) {
+  summary(data[columns])
+}
+
+numeric_summary <- list(
+  Electronics = summarize_numeric(electronics, c("discount_price", "actual_price", "ratings", "no_of_ratings")),
+  HomeKitchen = summarize_numeric(home_kitchen, c("discount_price", "actual_price", "ratings", "no_of_ratings")),
+  SportsFitness = summarize_numeric(sports_fitness, c("discount_price", "actual_price", "ratings", "no_of_ratings")),
+  Fashion = summarize_numeric(fashion, c("discount_price", "actual_price", "ratings", "no_of_ratings"))
+)
+numeric_summary
+
+```
+
+
+```{r}
+# Function to preview unique values in a text column
+preview_text_values <- function(data, column, n = 10) {
+  head(unique(data[[column]]), n)
+}
+
+text_preview <- list(
+  Electronics = preview_text_values(electronics, "name"),
+  HomeKitchen = preview_text_values(home_kitchen, "name"),
+  SportsFitness = preview_text_values(sports_fitness, "name"),
+  Fashion = preview_text_values(fashion, "name")
+)
+text_preview
+
+```
+
+```{r}
+# Validate numeric columns
+validate_numeric_ranges <- function(data) {
+  list(
+    RatingsOutOfRange = data %>%
+      filter(ratings < 1 | ratings > 5) %>%
+      nrow(),
+    PriceMismatch = data %>%
+      filter(discount_price > actual_price) %>%
+      nrow()
+  )
+}
+
+numeric_validation <- list(
+  Electronics = validate_numeric_ranges(electronics),
+  HomeKitchen = validate_numeric_ranges(home_kitchen),
+  SportsFitness = validate_numeric_ranges(sports_fitness),
+  Fashion = validate_numeric_ranges(fashion)
+)
+
+numeric_validation
+
+```
+
+
+```{r}
+# Filter or replace invalid ratings
+fix_ratings <- function(data) {
+  # Remove rows with invalid ratings
+  data <- data %>%
+    filter(ratings >= 1 & ratings <= 5)
+  
+  return(data)
+}
+
+electronics <- fix_ratings(electronics)
+home_kitchen <- fix_ratings(home_kitchen)
+sports_fitness <- fix_ratings(sports_fitness)
+fashion <- fix_ratings(fashion)
+
+```
+
+
+```{r}
+# Fix price mismatches
+fix_prices <- function(data) {
+  # Remove rows with mismatched prices
+  data <- data %>%
+    filter(discount_price <= actual_price)
+  
+  return(data)
+}
+
+electronics <- fix_prices(electronics)
+home_kitchen <- fix_prices(home_kitchen)
+sports_fitness <- fix_prices(sports_fitness)
+fashion <- fix_prices(fashion)
+
+```
+
+```{r}
+# Re-validate numeric ranges after fixes
+numeric_validation_post <- list(
+  Electronics = validate_numeric_ranges(electronics),
+  HomeKitchen = validate_numeric_ranges(home_kitchen),
+  SportsFitness = validate_numeric_ranges(sports_fitness),
+  Fashion = validate_numeric_ranges(fashion)
+)
+
+numeric_validation_post
+
+```
+
+
+```{r}
+# Compare row counts before and after cleaning
+compare_row_counts <- function(original, cleaned) {
+  list(
+    OriginalRows = nrow(original),
+    CleanedRows = nrow(cleaned),
+    RowsRemoved = nrow(original) - nrow(cleaned)
+  )
+}
+
+row_count_comparison <- list(
+  Electronics = compare_row_counts(read.csv("All Electronics.csv"), electronics),
+  HomeKitchen = compare_row_counts(read.csv("All Home and Kitchen.csv"), home_kitchen),
+  SportsFitness = compare_row_counts(read.csv("All Sports Fitness and Outdoors.csv"), sports_fitness),
+  Fashion = compare_row_counts(read.csv("Amazon Fashion.csv"), fashion)
+)
+
+row_count_comparison
+
+```
+
+```{r}
+# Clean, standardize, and handle NA values in one step
+clean_standardize_handle_na <- function(data, text_columns, numeric_columns) {
+  data %>%
+    mutate(
+      across(all_of(text_columns), ~ str_trim(tolower(str_replace_all(., "[₹]", "")))),
+      across(all_of(numeric_columns), ~ as.numeric(str_replace_all(., "[₹,]", ""))),
+      across(all_of(numeric_columns), ~ ifelse(is.na(.), 0, .))
+    ) %>%
+    filter(actual_price != 0)
+}
+
+electronics <- clean_standardize_handle_na(electronics, c("name", "main_category"), c("discount_price", "actual_price", "no_of_ratings"))
+home_kitchen <- clean_standardize_handle_na(home_kitchen, c("name", "main_category"), c("discount_price", "actual_price", "no_of_ratings"))
+sports_fitness <- clean_standardize_handle_na(sports_fitness, c("name", "main_category"), c("discount_price", "actual_price", "no_of_ratings"))
+fashion <- clean_standardize_handle_na(fashion, c("name", "main_category"), c("discount_price", "actual_price", "no_of_ratings"))
+
+```
+
+```{r}
+# Function to clean and convert ratings
+clean_ratings <- function(data) {
+  data %>%
+    mutate(
+      ratings = as.numeric(ratings),      # Convert to numeric
+      ratings = ifelse(is.na(ratings), 0, ratings) # Replace NA with 0
+    )
+}
+
+electronics <- clean_ratings(electronics)
+home_kitchen <- clean_ratings(home_kitchen)
+sports_fitness <- clean_ratings(sports_fitness)
+fashion <- clean_ratings(fashion)
+
+```
+
+```{r}
+# Add derived features
+add_features <- function(data) {
+  data %>%
+    mutate(
+      discount_percentage = round((actual_price - discount_price) / actual_price * 100, 2),
+      popularity_score = ratings * log1p(no_of_ratings) # Log-scaled to avoid dominance by large values
+    )
+}
+
+electronics <- add_features(electronics)
+home_kitchen <- add_features(home_kitchen)
+sports_fitness <- add_features(sports_fitness)
+fashion <- add_features(fashion)
+```
+
+
+```{r}
+all_products <- bind_rows(electronics, home_kitchen, sports_fitness, fashion)
+```
+
+```{r}
+# Swap the contents of main_category and sub_category
+swap_main_and_sub <- function(data) {
+  data %>%
+    mutate(
+      temp_category = main_category,      
+      main_category = sub_category,       
+      sub_category = temp_category        
+    ) %>%
+    select(-temp_category)  
+}
+
+all_products <- swap_main_and_sub(all_products)
+```
+
+```{r}
+add_weighted_scoring <- function(data, weights = c(popularity = 0.5, discount = 0.1, rating = 0.4)) {
+  max_popularity <- max(data$popularity_score, na.rm = TRUE)
+  max_discount <- max(data$discount_percentage, na.rm = TRUE)
+  max_rating <- max(data$ratings, na.rm = TRUE)
+  
+  data %>%
+    mutate(
+      normalized_popularity = popularity_score / max_popularity,
+      normalized_discount = (100 - discount_percentage) / max_discount,
+      normalized_rating = ratings / max_rating,
+      weighted_score = weights["popularity"] * normalized_popularity +
+                       weights["discount"] * normalized_discount +
+                       weights["rating"] * normalized_rating
+    ) %>%
+    arrange(desc(weighted_score))
+}
+
+all_products <- add_weighted_scoring(all_products)
+
+```
+
+```{r}
+# Prioritize one main category and remove duplicates
+prioritize_and_remove_duplicates <- function(data, priority_order) {
+  data <- data %>%
+    mutate(
+      category_priority = factor(main_category, levels = priority_order, ordered = TRUE)
+    )
+  
+  data <- data %>%
+    group_by(name) %>%
+    slice_min(order_by = category_priority) %>% 
+    ungroup() %>%
+    select(-category_priority)  
+  
+  return(data)
+}
+
+priority_order <- c(
+  "All Electronics", 
+  "Amazon Fashion", 
+  "All Home & Kitchen", 
+  "All Sports, Fitness & Outdoors"
+)
+
+all_products <- prioritize_and_remove_duplicates(all_products, priority_order)
+```
+
+```{r}
+# Function to standardize only the product_name column
+standardize_user_history <- function(user_history_data) {
+  user_history_data %>%
+    mutate(
+      product_name = str_trim(tolower(product_name))
+    )
+}
+
+standardized_user_history <- standardize_user_history(user_history)
+head(standardized_user_history)
+```
+
+
+```{r}
+# Combined function to retrieve user history and match with all products
+get_and_match_user_history <- function(target_user_id, user_history_data, product_data) {
+  user_history_data <- user_history_data %>%
+    mutate(user_id = as.integer(user_id))
+  
+  user_history <- user_history_data %>%
+    filter(user_id == target_user_id)
+  
+  if (nrow(user_history) == 0) {
+    warning(paste("No data found for user_id:", target_user_id))
+    return(NULL)
+  }
+  
+  matched_products <- product_data %>%
+    filter(name %in% user_history$product_name)
+  
+  if (nrow(matched_products) == 0) {
+    warning("No matching products found for the user's history.")
+    return(NULL)
+  }
+  
+  return(matched_products)
+}
+
+user_4_matched_products <- get_and_match_user_history(4, standardized_user_history, all_products)
+print(user_4_matched_products)
+```
+
+```{r}
+get_top_recommendations <- function(target_user_id, user_history_data, product_data, top_n = 5) {
+  interaction_weights <- c("view" = 1, "add_to_cart" = 2, "purchase" = 3)
+
+  user_history_scores <- user_history_data %>%
+  mutate(
+    interaction_weight = interaction_weights[interaction_type]
+  ) %>%
+  filter(!is.na(interaction_weight), user_id == target_user_id) %>% # Remove rows with NA weights
+  group_by(product_name, main_category) %>%
+  summarise(interaction_score = sum(interaction_weight, na.rm = TRUE)) %>%
+  ungroup()
+
+  
+  if (nrow(user_history_scores) == 0) {
+    cat("No user history scores found.\n")
+    return(NULL)
+  }
+  
+  user_categories <- user_history_scores %>%
+    group_by(main_category) %>%
+    summarise(total_score = sum(interaction_score)) %>%
+    arrange(desc(total_score))
+  
+  if (nrow(user_categories) == 0) {
+    cat("No categories of interest found.\n")
+    user_categories <- data.frame(main_category = unique(product_data$main_category), total_score = 0)
+  }
+  
+  recommendations <- product_data %>%
+    filter(main_category %in% user_categories$main_category) %>%
+    filter(!name %in% user_history_scores$product_name) %>%
+    rowwise() %>%
+    mutate(
+      category_score = case_when(
+        main_category %in% user_categories$main_category ~ 
+          user_categories$total_score[match(main_category, user_categories$main_category)],
+        TRUE ~ 0
+      ),
+      
+      combined_score = (0.2 * category_score + 
+                        0.5* weighted_score + 
+                        0.3 * ratings)
+    ) %>%
+    ungroup() %>%
+    arrange(desc(combined_score)) %>%
+    head(top_n)
+  
+  if (nrow(recommendations) == 0) {
+    cat("No recommendations found. Using fallback.\n")
+    recommendations <- product_data %>%
+      arrange(desc(weighted_score), desc(ratings)) %>%
+      head(top_n)
+  }
+  
+  cat("Final recommendations:\n")
+  print(recommendations)
+  
+  return(recommendations)
+}
+
+top_1_recommendations <- get_top_recommendations(1, standardized_user_history, all_products, top_n = 5)
+top_2_recommendations <- get_top_recommendations(2, standardized_user_history, all_products, top_n = 5)
+top_3_recommendations <- get_top_recommendations(3, standardized_user_history, all_products, top_n = 5)
+top_4_recommendations <- get_top_recommendations(4, standardized_user_history, all_products, top_n = 5)
+top_5_recommendations <- get_top_recommendations(5, standardized_user_history, all_products, top_n = 5)
+top_6_recommendations <- get_top_recommendations(6, standardized_user_history, all_products, top_n = 5)
+top_7_recommendations <- get_top_recommendations(7, standardized_user_history, all_products, top_n = 5)
+```
+
+```{r}
+# Combine recommendations for all users
+all_recommendations <- bind_rows(
+  top_1_recommendations %>% mutate(user_id = 1),
+  top_2_recommendations %>% mutate(user_id = 2),
+  top_3_recommendations %>% mutate(user_id = 3),
+  top_4_recommendations %>% mutate(user_id = 4),
+  top_5_recommendations %>% mutate(user_id = 5),
+  top_6_recommendations %>% mutate(user_id = 6),
+  top_7_recommendations %>% mutate(user_id = 7)
+)
+
+actual_purchases <- read.csv("predicted_purchases_extended.csv", stringsAsFactors = FALSE)
+
+# Function to evaluate recommendations
+evaluate_recommendations <- function(recommendations, actuals, top_n = 5) {
+  results <- recommendations %>%
+    group_by(user_id) %>%
+    summarise(
+      recommended = list(head(name, top_n)),  
+      actual = list(head(actuals$predicted_purchase[actuals$user_id == cur_group_id()], top_n)),  
+      true_positives = length(intersect(recommended[[1]], actual[[1]])),  
+      accuracy = true_positives / top_n  
+    )
+  
+  return(results)
+}
+
+accuracy_results <- evaluate_recommendations(all_recommendations, actual_purchases, top_n = 5)
+
+```
+
+```{r}
+accuracy_results
+```
+
+```{r}
+overall_accuracy <- mean(accuracy_results$accuracy, na.rm = TRUE)
+cat("Overall Accuracy:", overall_accuracy * 100, "%")
+```
+Plots
+# 1. Dataset Exploration
+
+## Distribution of Numeric Features (e.g., Prices, Ratings)
+```{r}
+ggplot(electronics, aes(x = actual_price, y = discount_price)) +
+  geom_point(color = "blue", alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Scatter Plot of Actual vs. Discount Prices in Electronics",
+       x = "Actual Price", y = "Discount Price")
+```
+
+## Category Distribution
+```{r}
+library(plotrix)
+
+category_distribution <- all_products %>%
+  group_by(main_category) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count))
+
+labels <- category_distribution$main_category
+counts <- category_distribution$Count
+
+labels <- paste0(labels, " (", round(100 * counts / sum(counts), 1), "%)")
+
+pie3D(counts, 
+      labels = labels, 
+      main = "Category Distribution (3D Pie Chart)", 
+      explode = 0.1, 
+      labelcex = 0.8, 
+      radius = 1.5, 
+      col = rainbow(length(counts)))
+```
+
+
+# 2. Data Cleaning and Validation
+## Missing Data Before and After Cleaning
+```{r}
+library(tidyr)
+```
+
+
+```{r}
+# Chart for Row Count Comparison
+ggplot(row_count_comparison_long, aes(x = Dataset, y = RowCount, fill = Stage)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7, color = "black", size = 0.3) +
+  theme_minimal() +
+  labs(
+    title = "Row Counts Before and After Cleaning",
+    subtitle = "Comparison of original and cleaned data across datasets",
+    x = "Dataset",
+    y = "Number of Rows",
+    caption = "Source: Dataset Cleaning Process"
+  ) +
+  scale_fill_manual(
+    values = c("OriginalRows" = "#0073C2FF", "CleanedRows" = "#EFC000FF"),
+    name = "Stage",
+    labels = c("Original Rows", "Cleaned Rows")
+  ) +
+  theme(
+    text = element_text(family = "Arial", size = 12),
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 13, face = "italic"),
+    axis.text.x = element_text(size = 11, angle = 15, hjust = 1),
+    axis.text.y = element_text(size = 11),
+    axis.title = element_text(size = 13),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 11),
+    panel.grid.major = element_line(size = 0.5, color = "grey80"),
+    panel.grid.minor = element_blank()
+  ) +
+  geom_text(
+    aes(label = RowCount),
+    position = position_dodge(width = 0.7),
+    vjust = -0.3,
+    size = 3.5,
+    color = "black"
+  )
+```
+# Feature Engineering
+## Discount Percentage Distribution
+```{r}
+ggplot(electronics, aes(x = discount_percentage)) +
+  geom_histogram(binwidth = 5, fill = "purple", color = "black", alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Discount Percentage Distribution in Electronics",
+       x = "Discount Percentage", y = "Frequency")
+
+```
+
+## Popularity Score Distribution
+```{r}
+ggplot(electronics, aes(x = popularity_score)) +
+  geom_density(fill = "#0073C2FF", alpha = 0.6, color = "black", size = 0.5) +
+  theme_minimal() +
+  labs(
+    title = "Popularity Score Distribution in Electronics",
+    subtitle = "Density plot showcasing the distribution of scores",
+    x = "Popularity Score",
+    y = "Density",
+    caption = "Source: Electronics Dataset"
+  ) +
+  theme(
+    text = element_text(family = "Arial", size = 12),
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 13, face = "italic", hjust = 0.5),
+    axis.title = element_text(size = 13),
+    axis.text = element_text(size = 11),
+    panel.grid.major = element_line(size = 0.5, color = "grey85"),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "white"),
+    plot.background = element_rect(fill = "#f8f9fa", color = NA),
+    plot.caption = element_text(size = 10, face = "italic", hjust = 1)
+  ) +
+  annotate("text", x = median(electronics$popularity_score, na.rm = TRUE), 
+           y = max(density(electronics$popularity_score, na.rm = TRUE)$y, na.rm = TRUE) * 0.9, 
+           label = "Median", color = "red", size = 4, fontface = "italic")
+```
+
+## Correlation Between Features
+```{r}
+library(pheatmap)
+
+pheatmap(cor_matrix, 
+         color = colorRampPalette(c("blue", "white", "red"))(100), 
+         display_numbers = TRUE,
+         fontsize = 12, 
+         main = "Clustered Correlation Heatmap")
+```
+
+### Bar Chart: True Positives by User
+```{r}
+ggplot(accuracy_results, aes(x = reorder(as.factor(user_id), true_positives), y = true_positives, fill = as.factor(user_id))) +
+  geom_bar(stat = "identity", width = 0.7, color = "black", size = 0.3) +
+  coord_flip() +
+  theme_minimal() +
+  labs(
+    title = "True Positives by User",
+    subtitle = "Horizontal Presentation for Better Readability",
+    x = "User ID",
+    y = "True Positives",
+    caption = "Source: Accuracy Results"
+  ) +
+  scale_fill_manual(values = RColorBrewer::brewer.pal(n = nlevels(as.factor(accuracy_results$user_id)), "Set3"), 
+                    name = "User ID") +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, face = "italic", hjust = 0.5),
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 11),
+    legend.position = "bottom",
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 12)
+  ) +
+  geom_text(aes(label = true_positives), hjust = -0.3, size = 3)
+```
+# 6. Product Analysis
+## Top Recommended Products for user 1 and 3
+```{r}
+top_1_recommendations %>%
+  mutate(rank = row_number()) %>%
+  ggplot(aes(x = rank, y = top_1_recommendations$combined_score, group = 1)) +
+  geom_line(color = "darkblue", size = 1.2) +
+  geom_point(size = 4, color = "red") +
+  theme_minimal() +
+  labs(title = "Ranking of Top Recommended Products",
+       x = "Rank", y = "Weighted Score") +
+  theme(
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)
+  )
+
+top_3_recommendations %>%
+  mutate(rank = row_number()) %>%
+  ggplot(aes(x = rank, y = top_3_recommendations$combined_score, group = 1)) +
+  geom_line(color = "darkblue", size = 1.2) +
+  geom_point(size = 4, color = "red") +
+  theme_minimal() +
+  labs(title = "Ranking of Top Recommended Products",
+       x = "Rank", y = "Weighted Score") +
+  theme(
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)
+  )
+```
+
+## Price Range Distribution Across Categories
+```{r}
+library(plotly)
+
+plot_ly(
+  all_products,
+  x = ~main_category,
+  y = ~actual_price,
+  type = "box",
+  color = ~main_category
+) %>%
+  layout(
+    title = "Price Range Distribution Across Categories",
+    xaxis = list(title = "Category"),
+    yaxis = list(title = "Price"),
+    showlegend = FALSE
+  )
+```
+
+## Ratings Distribution Across Categories
+```{r}
+ggplot(all_products, aes(x = main_category, y = ratings, fill = main_category)) +
+  geom_violin(trim = FALSE, alpha = 0.7, color = "black", size = 0.3) + 
+  geom_boxplot(width = 0.2, fill = "white", color = "black", outlier.shape = NA, alpha = 0.5) + 
+  theme_minimal() +
+  labs(
+    title = "Ratings Distribution Across Categories",
+    subtitle = "Violin plot with boxplot overlay",
+    x = "Category",
+    y = "Ratings",
+    caption = "Source: All Products Dataset"
+  ) +
+  scale_fill_brewer(palette = "Set3", name = "Category") + 
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, face = "italic", hjust = 0.5),
+    axis.text.x = element_text(size = 10, angle = 45, hjust = 1), 
+    axis.text.y = element_text(size = 10),
+    legend.position = "bottom",
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 12)
+  ) +
+  geom_jitter(alpha = 0.3, size = 1, width = 0.1, color = "gray50") 
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
